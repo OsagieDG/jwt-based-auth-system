@@ -4,13 +4,18 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
+	"log"
 	"net/http"
+	"os"
+	"strconv"
 	"time"
 
 	"github.com/OsagieDG/jwt-based-auth-system/internal/models"
 	"github.com/OsagieDG/jwt-based-auth-system/internal/query"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
+	"github.com/joho/godotenv"
 )
 
 type ContextKey string
@@ -18,9 +23,20 @@ type ContextKey string
 const userID ContextKey = "userID"
 
 var (
-	jwtKey          = []byte("MY_SECRET_KEY")
-	refreshTokenKey = []byte("MY_REFRESH_SECRET_KEY")
+	jwtKey          = []byte(os.Getenv("MY_SECRET_KEY"))
+	refreshTokenKey = []byte(os.Getenv("MY_REFRESH_SECRET_KEY"))
 )
+
+func init() {
+	err := godotenv.Load()
+	if err != nil {
+		log.Fatal("Error loading .env file")
+	}
+
+	if len(jwtKey) == 0 || len(refreshTokenKey) == 0 {
+		log.Fatal("MY_SECRET_KEY or MY_REFRESH_SECRET_KEY is missing! Stopping application.")
+	}
+}
 
 type Claims struct {
 	UserID uuid.UUID `json:"user_id"`
@@ -79,7 +95,22 @@ func (s *SessionHandler) Login(w http.ResponseWriter, r *http.Request) {
 			ExpiresAt: jwt.NewNumericDate(refreshExpirationTime),
 		},
 	}
-	token, _ := jwt.NewWithClaims(jwt.SigningMethodHS256, claims).SignedString(jwtKey)
+
+	// Create the token object with claims
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+
+	// Ensure algorithm is HS256 before signing
+	if token.Method.Alg() != jwt.SigningMethodHS256.Alg() {
+		log.Fatal("JWT is using an insecure algorithm!")
+	}
+
+	// Sign the token correctly
+	tokenString, err := token.SignedString(jwtKey)
+	if err != nil {
+		http.Error(w, "Failed to generate JWT", http.StatusInternalServerError)
+		return
+	}
+
 	refreshToken, _ := jwt.NewWithClaims(jwt.SigningMethodHS256, refreshClaims).SignedString(refreshTokenKey)
 
 	refreshTokenModel := &models.RefreshToken{
@@ -98,7 +129,7 @@ func (s *SessionHandler) Login(w http.ResponseWriter, r *http.Request) {
 
 	http.SetCookie(w, &http.Cookie{
 		Name:     "token",
-		Value:    token,
+		Value:    tokenString,
 		Expires:  expirationTime,
 		HttpOnly: true,
 		SameSite: http.SameSiteStrictMode,
@@ -170,6 +201,9 @@ func (s *SessionHandler) ValidateSession(next http.Handler) http.Handler {
 
 		claims := &Claims{}
 		tkn, err := jwt.ParseWithClaims(c.Value, claims, func(token *jwt.Token) (interface{}, error) {
+			if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
+				return nil, errors.New("Invalid signing method: " + strconv.Itoa(int(token.Header["alg"].(float64))))
+			}
 			return jwtKey, nil
 		})
 
@@ -266,7 +300,7 @@ func (s *SessionHandler) refreshJWTToken(w http.ResponseWriter, r *http.Request)
 	http.SetCookie(w, &http.Cookie{
 		Name:     "refresh_token",
 		Value:    "",
-		Expires:  time.Now().Add(-1 * time.Hour), // Expires the old token
+		Expires:  time.Now().Add(-1 * time.Hour),
 		HttpOnly: true,
 		SameSite: http.SameSiteStrictMode,
 	})

@@ -1,5 +1,5 @@
 # jwt-based-auth-system
-User Account CRUD with a jwt-based auth system
+User Account CRUD with a jwt-based auth system.
 
 - Find the session-based version here: [user-account-auth-system](https://github.com/OsagieDG/user-account-auth-system)
 

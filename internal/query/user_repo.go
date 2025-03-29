@@ -28,13 +28,28 @@ func NewUserSQLRepository(db *sql.DB) UserRespository {
 }
 
 func (ur *UserSQLRepository) InsertUser(ctx context.Context, user *models.User) (*models.User, error) {
+	tx, err := ur.DB.Begin()
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		if err != nil {
+			_ = tx.Rollback()
+		}
+	}()
+
 	userID := models.NewUUID()
 
-	_, err := ur.DB.ExecContext(ctx, `INSERT INTO auth.users (id, username, email, encrypted_password, is_admin) VALUES ($1, $2, $3, $4, $5)`,
+	_, err = tx.ExecContext(ctx, `INSERT INTO auth.users (id, username, email, encrypted_password, is_admin) VALUES ($1, $2, $3, $4, $5)`,
 		userID, user.UserName, user.Email, user.EncryptedPassword, false,
 	)
 	if err != nil {
+		_ = tx.Rollback()
 		return nil, fmt.Errorf("failed to insert user into database: %w", err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return nil, err
 	}
 
 	return user, nil
@@ -56,7 +71,7 @@ func (ur *UserSQLRepository) UpdateUserByID(ctx context.Context, userID uuid.UUI
 	)
 	if err != nil {
 		_ = tx.Rollback()
-		return nil, err
+		return nil, fmt.Errorf("failed to update user %w", err)
 	}
 
 	if err := tx.Commit(); err != nil {
